@@ -275,30 +275,11 @@ func (app *App) registerStatic(prefix, root string) {
 
 	var isStar = prefix == "*" || prefix == "/*"
 
-	files := map[string]string{}
 	// Clean root path
 	root = filepath.Clean(root)
 	// Check if root exist and is accessible
-	if _, err := os.Stat(root); err != nil {
-		log.Fatalf("%s", err)
-	}
-	// Store path url and file paths in map
-	if err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if !info.IsDir() {
-			url := "*"
-			if !isStar {
-				// /css/style.css: static/css/style.css
-				url = filepath.Join(prefix, strings.Replace(path, root, "", 1))
-			}
-			// \static\css: /static/css
-			url = filepath.ToSlash(url)
-			files[url] = path
-			if filepath.Base(path) == "index.html" {
-				files[url] = path
-			}
-		}
-		return err
-	}); err != nil {
+	info, err := os.Stat(root)
+	if err != nil {
 		log.Fatalf("%s", err)
 	}
 	compress := app.Settings.Compression
@@ -310,15 +291,27 @@ func (app *App) registerStatic(prefix, root string) {
 		HandleCtx: func(c *Ctx) {
 			// Only allow GET & HEAD methods
 			if c.method == "GET" || c.method == "HEAD" {
-				path := "*"
-				if !isStar {
-					path = c.path
+				var path string
+
+				if !info.IsDir() {
+					// root is a file, return the file
+					path = root
+				} else {
+					if !isStar {
+						// prefix accessed directly, try to load index.html if any
+						if c.path == prefix {
+							path = filepath.Join(root, "index.html")
+						} else {
+							path = filepath.Join(root, strings.Replace(c.path, prefix, "", 1))
+						}
+					} else {
+						// If isStar, the root CAN NOT be a directory
+						// because it will expose all files inside it, instead try to load index.html
+						path = filepath.Join(root, "index.html")
+					}
 				}
-				file := files[path]
-				if file != "" {
-					c.SendFile(file, compress)
-					return
-				}
+				c.SendFile(path, compress)
+				return
 			}
 			c.matched = false
 			c.Next()
